@@ -1,0 +1,30 @@
+[package]
+name = "junk-rfcomm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "A junk-core Link over Bluetooth Classic RFCOMM on macOS, through Apple's IOBluetooth framework"
+
+[dependencies]
+junk-core = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-io-bluetooth = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+# Not `[lints] workspace = true`: the workspace forbids `unsafe_code`, and an Objective-C
+# framework binding cannot honour that. See the crate docs for the terms of the exception.
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

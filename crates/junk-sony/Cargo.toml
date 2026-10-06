@@ -1,0 +1,20 @@
+[package]
+name = "junk-sony"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The Sony WH-1000XM4 headphones for the junk protocol stack: the RFCOMM stream map, framing, wire layer, typed payloads and Driver"
+
+[dependencies]
+serde = { workspace = true }
+junk-core = { workspace = true }
+
+[dev-dependencies]
+junk-pump = { workspace = true }
+junk-trace = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

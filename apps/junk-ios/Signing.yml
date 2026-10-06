@@ -1,0 +1,7 @@
+# Pulled in by project.yml only when Local.xcconfig exists (see bootstrap.sh). Nothing here
+# names a team: Local.xcconfig does, and it is gitignored.
+targets:
+  JunkIOS:
+    configFiles:
+      Debug: Local.xcconfig
+      Release: Local.xcconfig

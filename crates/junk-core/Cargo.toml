@@ -1,0 +1,15 @@
+[package]
+name = "junk-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Device-agnostic contract of the junk wearable protocol stack: Driver and Link traits, Input/Output, channels, GATT maps and generic primitives"
+
+[dependencies]
+serde = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

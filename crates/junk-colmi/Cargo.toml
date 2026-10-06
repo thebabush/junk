@@ -1,0 +1,17 @@
+[package]
+name = "junk-colmi"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The Colmi R0x ring family for the junk wearable protocol stack: GATT map, 16-byte frames, big-data frames and the command catalogue"
+
+[dependencies]
+serde = { workspace = true }
+binrw = { workspace = true }
+junk-core = { workspace = true }
+junk-trace = { workspace = true }
+
+[lints]
+workspace = true

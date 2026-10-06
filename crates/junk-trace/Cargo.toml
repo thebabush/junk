@@ -1,0 +1,14 @@
+[package]
+name = "junk-trace"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Reader and writer of the junk trace v1 text format, the captured sessions under fixtures/, and the replay harness that drives any junk-core Driver from one"
+
+[dependencies]
+junk-core = { workspace = true }
+
+[lints]
+workspace = true

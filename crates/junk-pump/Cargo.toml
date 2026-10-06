@@ -1,0 +1,21 @@
+[package]
+name = "junk-pump"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The one loop of the junk wearable protocol stack: owns a Driver and a Link, feeds inputs one at a time and applies every output in order, on tokio"
+
+[dependencies]
+junk-core = { workspace = true }
+junk-trace = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+
+[dev-dependencies]
+junk-colmi = { workspace = true }
+junk-fake = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

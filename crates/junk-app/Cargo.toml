@@ -1,0 +1,23 @@
+[package]
+name = "junk-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "What a shell asks of a ring in the junk wearable protocol stack: the sync and live sessions, the samples they collect and the progress they report, with no I/O of its own"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+junk-colmi = { workspace = true }
+junk-core = { workspace = true }
+junk-pump = { workspace = true }
+junk-trace = { workspace = true }
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }
+
+[lints]
+workspace = true

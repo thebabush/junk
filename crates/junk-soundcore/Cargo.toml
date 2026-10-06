@@ -1,0 +1,19 @@
+[package]
+name = "junk-soundcore"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The Soundcore speaker family for the junk protocol stack: the Motion 300 RFCOMM stream map, packets, command catalogue and Driver"
+
+[dependencies]
+junk-core = { workspace = true }
+
+[dev-dependencies]
+junk-pump = { workspace = true }
+junk-trace = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

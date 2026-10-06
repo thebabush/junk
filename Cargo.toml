@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+junk-app = { path = "crates/junk-app" }
+junk-ble = { path = "crates/junk-ble" }
+junk-colmi = { path = "crates/junk-colmi" }
+junk-core = { path = "crates/junk-core" }
+junk-fake = { path = "crates/junk-fake" }
+junk-pump = { path = "crates/junk-pump" }
+junk-rfcomm = { path = "crates/junk-rfcomm" }
+junk-soundcore = { path = "crates/junk-soundcore" }
+junk-sony = { path = "crates/junk-sony" }
+junk-trace = { path = "crates/junk-trace" }
+anyhow = "1"
+binrw = { version = "0.15", default-features = false }
+btleplug = "0.13"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4", features = ["derive"] }
+futures = { version = "0.3", default-features = false, features = ["std"] }
+objc2 = { version = "0.6", default-features = false, features = ["std"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDate", "NSObjCRuntime", "NSObject", "NSRunLoop", "NSString"] }
+objc2-io-bluetooth = { version = "0.3", default-features = false, features = ["std", "objc2", "objc2-foundation", "Bluetooth", "IOBluetoothDevice", "IOBluetoothObject", "IOBluetoothRFCOMMChannel", "IOBluetoothSDPServiceRecord", "IOBluetoothSDPUUID"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", default-features = false }
+uniffi = { version = "0.32", features = ["cli", "tokio"] }
+uuid = { version = "1", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

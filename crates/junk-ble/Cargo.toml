@@ -1,0 +1,20 @@
+[package]
+name = "junk-ble"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The real transport of the junk wearable protocol stack: a junk-core Link over btleplug (macOS/Linux/Windows), plus adapter lookup and scanning"
+
+[dependencies]
+btleplug = { workspace = true }
+futures = { workspace = true }
+junk-core = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+
+[dev-dependencies]
+junk-colmi = { workspace = true }
+
+[lints]
+workspace = true

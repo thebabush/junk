@@ -1,0 +1,18 @@
+# junk trace v1 — rfcomm probe, soundcore Motion 300, 2026-09-15 14:32
+# source: cargo run -p junk-rfcomm --example probe, against the paired speaker
+# columns: <iso-ts> <tx|rx> <channel> <hex>
+# lines starting with # are comments; "! " lines are link events kept for orientation
+# transport: Bluetooth Classic RFCOMM on service 0cf12d31-fac3-4553-bd80-d6832e7b3135,
+#   channel 11, negotiated MTU 668, device name "soundcore Motion 300"
+# the whole reply arrived as one RFCOMM chunk of 39 bytes, 47.2 ms after the write; the
+#   connect before it took 122 ms, with the main thread turning the main run loop
+# this is the capture that disproved the reversed start-of-packet. On the wire the host
+#   word is 08 ee and the device's is 09 ff, not ee 08 and ff 09: Gadgetbridge's
+#   (short)0xee08 and (short)0xff09 are written through a little-endian ByteBuffer, so
+#   those constants are not the wire order, and reading them as such was the mistake
+# the write is command 0x0101 with no payload, a pure read; the reply decodes as volume
+#   25, battery 4 fifths = 80 %, not charging, not playing, voice prompts off, auto
+#   power-off on with duration index 2, firmware 3.0.4, serial ACCLXX0000000000x
+! 2026-09-15T14:32:10.000-04:00 connected mtu=668 channels=rfcomm
+2026-09-15T14:32:10.000-04:00 tx rfcomm 08ee00000001010a0002
+2026-09-15T14:32:10.047-04:00 rx rfcomm 09ff0000010101270019040000000102332e302e344143434c5858303030303030303030307860

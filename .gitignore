@@ -1,0 +1,18 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+target/
+out/
+.venv/
+.DS_Store
+*.log
+
+# iOS: everything the build script and Xcode generate
+apps/*/Generated/
+apps/*/*.xcodeproj/
+apps/*/build/
+DerivedData/
+*.xcframework/
+# The signing team for a device build: local, not the repo's business
+apps/*/Local.xcconfig
