@@ -4,17 +4,22 @@
 //! runs the only loop that connects them (SPEC §3.1, invariant 3). It waits on the link,
 //! on the timers the driver armed, on the requests coming through its [`Handle`]s and on an
 //! optional clock tick; feeds the driver one [`Input`](junk_core::Input) at a time; and
-//! applies every [`Output`](junk_core::Output) of that step, in order, before it waits
-//! again. Nothing else calls [`Driver::handle`](junk_core::Driver::handle) and nothing else
+//! applies [`Output`](junk_core::Output)s of that step in order, until the step completes
+//! or the session ends. Nothing else calls [`Driver::handle`](junk_core::Driver::handle) and nothing else
 //! touches the link.
 //!
-//! The pump never times anything out (invariant 4): a timeout is the driver's
-//! [`SetTimer`](junk_core::Output::SetTimer) coming back as
-//! [`Timer`](junk_core::Input::Timer). The pump only keeps the deadlines.
+//! Protocol timeouts belong to the driver: [`SetTimer`](junk_core::Output::SetTimer)
+//! comes back as [`Timer`](junk_core::Input::Timer). Separately, transport operations are
+//! bounded by [`PumpConfig::io_timeout`] and any already armed driver deadline. If an
+//! operation stalls until that deadline, the pump ends the session rather than retrying
+//! an operation whose device-side effects are unknown. I/O remains sequential, so ticks
+//! and inputs can be delayed while an operation is running; they are not processed by a
+//! concurrent transport worker. Disconnect cleanup has its own bounded wait.
 //!
 //! # Priority
 //!
-//! When several things are ready at once they are taken in this order, always:
+//! Explicit shutdown interrupts the session, including in-progress I/O. Otherwise, when
+//! several things are ready at once in the input loop they are taken in this order:
 //!
 //! 1. the link (a notification or a disconnect),
 //! 2. the earliest armed timer,
@@ -41,6 +46,9 @@
 //! event. A future that resolves from a channel receiver (as the [`channel_link`] one does)
 //! is; one that pulls a notification out of a transport and then awaits something else
 //! before returning it is not.
+//!
+//! Other operation futures may be dropped on shutdown or an I/O deadline. The link must
+//! remain safe to disconnect and reconnect after cancellation; see [`Link`](junk_core::Link).
 //!
 //! # Testing a driver
 //!

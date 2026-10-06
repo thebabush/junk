@@ -463,6 +463,7 @@ async fn ticks_carry_millis_since_the_pump_was_created() {
         driver,
         PumpConfig {
             tick_every: Some(100 * MS),
+            ..PumpConfig::default()
         },
     );
     // The clock starts at creation, not at `run`.
@@ -816,4 +817,208 @@ fn errors_display_and_convert() {
             .contains(&LinkError::NotConnected.to_string())
     );
     assert!(std::error::Error::source(&connect).is_some());
+}
+
+/// A backend that never completes one chosen operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stall {
+    Connect,
+    Write,
+    Subscribe,
+    Read,
+    Disconnect,
+}
+
+struct StalledLink {
+    stall: Stall,
+    entered: mpsc::UnboundedSender<Stall>,
+}
+
+impl StalledLink {
+    async fn operation(&self, operation: Stall) {
+        if self.stall == operation {
+            let _ = self.entered.send(operation);
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+impl Link for StalledLink {
+    async fn connect(&mut self, _: &GattMap) -> Result<(ChannelSet, u16), LinkError> {
+        self.operation(Stall::Connect).await;
+        Ok((all(), DEFAULT_MTU))
+    }
+
+    async fn write(&mut self, _: Channel, _: &[u8]) -> Result<(), LinkError> {
+        self.operation(Stall::Write).await;
+        Ok(())
+    }
+
+    async fn subscribe(&mut self, _: Channel) -> Result<(), LinkError> {
+        self.operation(Stall::Subscribe).await;
+        Ok(())
+    }
+
+    async fn read(&mut self, _: Channel) -> Result<Bytes, LinkError> {
+        self.operation(Stall::Read).await;
+        Ok(vec![])
+    }
+
+    async fn disconnect(&mut self) {
+        self.operation(Stall::Disconnect).await;
+    }
+
+    async fn next(&mut self) -> LinkEvent {
+        std::future::pending().await
+    }
+}
+
+fn stalled_outputs(stall: Stall) -> Vec<Output<(), &'static str>> {
+    vec![match stall {
+        Stall::Connect | Stall::Disconnect => Output::Disconnect,
+        Stall::Write => Output::Tx {
+            chan: CMD,
+            bytes: vec![1],
+        },
+        Stall::Subscribe => Output::Subscribe(EVT),
+        Stall::Read => Output::Read(EXTRA),
+    }]
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_interrupts_each_stalled_operation() {
+    for stall in [Stall::Connect, Stall::Write, Stall::Subscribe, Stall::Read] {
+        let (entered, mut started) = mpsc::unbounded_channel();
+        let (driver, log) = recording(Scripted {
+            on_connected: stalled_outputs(stall),
+        });
+        let (mut pump, handle, mut events) = Pump::new(
+            driver,
+            StalledLink { stall, entered },
+            PumpConfig::default(),
+        );
+        let now = tokio::time::Instant::now();
+        let (result, ()) = tokio::join!(pump.run(), async {
+            assert_eq!(started.recv().await, Some(stall));
+            handle.shutdown();
+        });
+        assert_eq!(result, Ok(Stop::Shutdown), "{stall:?}");
+        assert_eq!(tokio::time::Instant::now(), now, "shutdown waited for I/O");
+        if stall == Stall::Connect {
+            assert!(log.borrow().is_empty());
+            assert!(drain(&mut events).is_empty());
+        } else {
+            assert!(matches!(log.borrow().last(), Some(Input::Disconnected)));
+            assert_eq!(
+                drain(&mut events),
+                vec![connected(), PumpEvent::Disconnected]
+            );
+        }
+        assert_eq!(pump.run().await, Ok(Stop::Shutdown));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn every_transport_operation_is_bounded() {
+    for stall in [
+        Stall::Connect,
+        Stall::Write,
+        Stall::Subscribe,
+        Stall::Read,
+        Stall::Disconnect,
+    ] {
+        let (entered, _started) = mpsc::unbounded_channel();
+        let (mut pump, handle, mut events) = Pump::new(
+            Scripted {
+                on_connected: stalled_outputs(stall),
+            },
+            StalledLink { stall, entered },
+            PumpConfig {
+                io_timeout: 50 * MS,
+                ..PumpConfig::default()
+            },
+        );
+        let now = tokio::time::Instant::now();
+        let mut queued = pin!(handle.request(()));
+        assert!(poll_once(queued.as_mut()).is_pending());
+        let result = pump.run().await;
+        assert_eq!(tokio::time::Instant::now() - now, 50 * MS, "{stall:?}");
+        if stall == Stall::Connect {
+            assert!(matches!(result, Err(PumpError::Connect(LinkError::Io(_)))));
+            // A failed connection deliberately keeps requests for a later attempt.
+            assert!(poll_once(queued.as_mut()).is_pending());
+            assert!(drain(&mut events).is_empty());
+        } else {
+            assert_eq!(result, Ok(Stop::Disconnected));
+            assert_eq!(queued.await, Err(RequestError::Stopped));
+            let events = drain(&mut events);
+            assert_eq!(events.first(), Some(&connected()));
+            assert_eq!(events.last(), Some(&PumpEvent::Disconnected));
+            if stall != Stall::Disconnect {
+                assert!(matches!(
+                    events.get(1),
+                    Some(PumpEvent::LinkError(LinkError::Io(_)))
+                ));
+            }
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn armed_timer_bounds_stalled_io() {
+    let (entered, _started) = mpsc::unbounded_channel();
+    let (mut pump, _handle, mut events) = Pump::new(
+        Scripted {
+            on_connected: vec![
+                Output::SetTimer {
+                    id: junk_core::TimerId(1),
+                    after: 20 * MS,
+                },
+                Output::Tx {
+                    chan: CMD,
+                    bytes: vec![1],
+                },
+                Output::Event("must not execute after timeout"),
+            ],
+        },
+        StalledLink {
+            stall: Stall::Write,
+            entered,
+        },
+        PumpConfig::default(),
+    );
+    let now = tokio::time::Instant::now();
+    assert_eq!(pump.run().await, Ok(Stop::Disconnected));
+    assert_eq!(tokio::time::Instant::now() - now, 20 * MS);
+    let events = drain(&mut events);
+    assert_eq!(events.len(), 3);
+    assert!(matches!(events[1], PumpEvent::LinkError(_)));
+    assert_eq!(events[2], PumpEvent::Disconnected);
+}
+
+#[tokio::test(start_paused = true)]
+async fn unread_requests_fail_at_session_end_without_dropping_pump() {
+    let Rig {
+        mut pump,
+        handle,
+        peer: _peer,
+        ..
+    } = rig(
+        Scripted {
+            on_connected: vec![Output::Disconnect],
+        },
+        PumpConfig::default(),
+    );
+    let mut queued = pin!(handle.request(()));
+    assert!(poll_once(queued.as_mut()).is_pending());
+    assert_eq!(pump.run().await, Ok(Stop::Disconnected));
+    assert_eq!(
+        poll_once(queued.as_mut()),
+        Poll::Ready(Err(RequestError::Stopped))
+    );
+    // The handle is still live, but this is a new request for the next session.
+    let mut later = pin!(handle.request(()));
+    assert!(poll_once(later.as_mut()).is_pending());
+    assert_eq!(pump.run().await, Ok(Stop::Disconnected));
+    assert_eq!(later.await, Err(RequestError::Stopped));
 }

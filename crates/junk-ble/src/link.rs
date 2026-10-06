@@ -47,6 +47,8 @@ pub struct BleLink {
     config: BleConfig,
     name: Option<String>,
     session: Option<Session>,
+    /// A connection was attempted and may need cleanup, even without a full session.
+    connection_attempted: bool,
     /// Notifications on characteristics no channel resolved to, dropped.
     dropped_unmapped: Arc<AtomicUsize>,
 }
@@ -80,6 +82,7 @@ impl BleLink {
             config,
             name,
             session: None,
+            connection_attempted: false,
             dropped_unmapped: Arc::new(AtomicUsize::new(0)),
         })
     }
@@ -264,6 +267,7 @@ impl Link for BleLink {
         self.refresh(gatt).await?;
         // Subscribed before connecting, so a disconnect during or right after it is seen.
         let adapter_events = self.adapter.events().await.io()?;
+        self.connection_attempted = true;
         self.peripheral.connect().await.io()?;
         let (session, resolved) = match self.open_session(gatt, adapter_events).await {
             Ok(opened) => opened,
@@ -328,8 +332,15 @@ impl Link for BleLink {
 
     async fn disconnect(&mut self) {
         if let Some(session) = self.session.take() {
-            let _ = self.peripheral.disconnect().await;
+            // Abort before awaiting: disconnect itself may be cancelled by the pump.
             session.forwarder.abort();
+        }
+        // A cancelled connect may have reached the peripheral without installing a session.
+        // Do not disconnect a fresh handle: some backends wait for a disconnect callback
+        // that never arrives when this client has not attempted a connection.
+        if self.connection_attempted {
+            let _ = self.peripheral.disconnect().await;
+            self.connection_attempted = false;
         }
     }
 

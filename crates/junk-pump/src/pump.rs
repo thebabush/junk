@@ -12,11 +12,11 @@ use junk_core::{
     ChannelSet, Driver, Input, Instant, Link, LinkError, LinkEvent, Output, Outputs, ProtoError,
     ReqId, TimerId,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::{Interval, MissedTickBehavior};
 
 /// How a [`Pump`] runs.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PumpConfig {
     /// Feed the driver [`Input::Tick`] this often, or never if `None` or zero.
     ///
@@ -24,6 +24,21 @@ pub struct PumpConfig {
     /// happening. A tick that could not be delivered on time (the loop was busy) is delayed,
     /// not repeated: the next one comes a full period after the late one.
     pub tick_every: Option<Duration>,
+    /// Maximum time for one transport operation, including connect and disconnect.
+    ///
+    /// Outputs remain sequential: ticks may be delayed by this much. An already armed
+    /// driver timer shortens the I/O deadline. Expiring an I/O deadline ends the session;
+    /// cancelled operations are never retried, since their device-side effects are unknown.
+    pub io_timeout: Duration,
+}
+
+impl Default for PumpConfig {
+    fn default() -> Self {
+        Self {
+            tick_every: None,
+            io_timeout: Duration::from_secs(10),
+        }
+    }
 }
 
 /// What a [`Pump`] reports on its events channel, in the order it happened.
@@ -40,9 +55,8 @@ pub enum PumpEvent<Ev> {
     Disconnected,
     /// Something the driver reported on its own.
     Event(Ev),
-    /// A write, a subscription or a read the driver asked for failed. The loop goes on: if
-    /// the device is truly gone the link will say so, and the driver's own timeout fails
-    /// whatever request the operation belonged to. A failed read feeds no [`Input::Rx`].
+    /// A write, subscription or read failed. Backend errors leave the loop running;
+    /// an I/O deadline ends the session. A failed read feeds no [`Input::Rx`].
     LinkError(LinkError),
 }
 
@@ -138,6 +152,7 @@ enum Command<D: Driver> {
 pub struct Handle<D: Driver> {
     commands: mpsc::UnboundedSender<Command<D>>,
     shutdown: Arc<AtomicBool>,
+    shutdown_notify: Arc<Notify>,
 }
 
 impl<D: Driver> Handle<D> {
@@ -175,6 +190,7 @@ impl<D: Driver> Handle<D> {
         if !self.shutdown.swap(true, Ordering::AcqRel) {
             // Only the first call sends; the flag already carries the decision, and a
             // second message would end a later `run` that has nothing to do with it.
+            self.shutdown_notify.notify_one();
             let _ = self.commands.send(Command::Shutdown);
         }
     }
@@ -186,6 +202,7 @@ impl<D: Driver> Clone for Handle<D> {
         Handle {
             commands: self.commands.clone(),
             shutdown: Arc::clone(&self.shutdown),
+            shutdown_notify: Arc::clone(&self.shutdown_notify),
         }
     }
 }
@@ -215,7 +232,7 @@ enum Wake<D: Driver> {
 enum Flow {
     /// Keep going.
     Continue,
-    /// The driver emitted [`Output::Disconnect`]; the link has been dropped.
+    /// The driver asked to disconnect, or I/O expired; cleanup must drop the link.
     Disconnect,
 }
 
@@ -228,11 +245,13 @@ pub struct Pump<D: Driver, L: Link> {
     driver: D,
     link: L,
     config: PumpConfig,
+    connected: bool,
     /// What [`Instant::ZERO`] means: when the pump was created.
     origin: tokio::time::Instant,
     commands: mpsc::UnboundedReceiver<Command<D>>,
     events: mpsc::UnboundedSender<PumpEvent<D::Ev>>,
     shutdown: Arc<AtomicBool>,
+    shutdown_notify: Arc<Notify>,
     /// The next [`ReqId`] to hand out.
     next_id: u32,
     /// Requests the driver has not answered yet.
@@ -257,14 +276,17 @@ impl<D: Driver, L: Link> Pump<D, L> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_notify = Arc::new(Notify::new());
         let pump = Pump {
             driver,
             link,
             config,
+            connected: false,
             origin: tokio::time::Instant::now(),
             commands: command_rx,
             events: event_tx,
             shutdown: Arc::clone(&shutdown),
+            shutdown_notify: Arc::clone(&shutdown_notify),
             next_id: 0,
             pending: BTreeMap::new(),
             timers: BTreeMap::new(),
@@ -274,30 +296,51 @@ impl<D: Driver, L: Link> Pump<D, L> {
         let handle = Handle {
             commands: command_tx,
             shutdown,
+            shutdown_notify,
         };
         (pump, handle, event_rx)
     }
 
     /// Connects and runs the loop until the link is gone or a handle stops it.
     ///
-    /// On success the events channel saw [`PumpEvent::Connected`] first and
-    /// [`PumpEvent::Disconnected`] last, and the driver saw [`Input::Connected`] first and
-    /// [`Input::Disconnected`] last, so every request in flight was answered by the driver
+    /// If connected, the events channel sees [`PumpEvent::Connected`] first and
+    /// [`PumpEvent::Disconnected`] last, and the driver sees [`Input::Connected`] first and
+    /// [`Input::Disconnected`] last, so every request in flight is answered by the driver
     /// (invariant 4). Requests that were queued but not yet fed, and any the driver did not
     /// answer, fail with [`RequestError::Stopped`]. Timers are forgotten.
     ///
     /// Returns [`Stop::Shutdown`] at once, without connecting, if a handle already shut
-    /// the pump down.
+    /// the pump down. Shutdown during connect emits neither connected nor disconnected
+    /// events. Shutdown interrupts active I/O; cleanup may take up to `io_timeout`.
     ///
     /// # Errors
     ///
-    /// [`PumpError::Connect`] if [`Link::connect`] failed; the driver was not told
+    /// [`PumpError::Connect`] if [`Link::connect`] failed or timed out; the driver was not told
     /// anything, and queued requests wait for the next call.
     pub async fn run(&mut self) -> Result<Stop, PumpError> {
-        let result = self.session().await;
+        if self.shutdown.load(Ordering::Acquire) {
+            self.fail_queued();
+            return Ok(Stop::Shutdown);
+        }
+        let notify = Arc::clone(&self.shutdown_notify);
+        let result = tokio::select! {
+            biased;
+            () = notify.notified() => Ok(Stop::Shutdown),
+            result = self.session() => result,
+        };
+        // Cancelling I/O does not undo its device-side effects. Always attempt cleanup,
+        // even after a failed/cancelled connect, but never wait forever for the backend.
+        let _ = tokio::time::timeout(self.config.io_timeout, self.link.disconnect()).await;
+        if self.connected {
+            self.finish();
+            self.connected = false;
+        }
         self.timers.clear();
         self.pending.clear();
         self.reads.clear();
+        if result.is_ok() {
+            self.fail_queued();
+        }
         result
     }
 
@@ -320,14 +363,15 @@ impl<D: Driver, L: Link> Pump<D, L> {
             self.fail_queued();
             return Ok(Stop::Shutdown);
         }
-        let (resolved, mtu) = self
-            .link
-            .connect(D::GATT)
-            .await
-            .map_err(PumpError::Connect)?;
+        let (resolved, mtu) =
+            tokio::time::timeout(self.config.io_timeout, self.link.connect(D::GATT))
+                .await
+                .map_err(|_| PumpError::Connect(io_timeout()))?
+                .map_err(PumpError::Connect)?;
+        self.connected = true;
         self.emit(PumpEvent::Connected { resolved, mtu });
         if self.step(Input::Connected { resolved, mtu }).await == Flow::Disconnect {
-            return Ok(self.finish(Stop::Disconnected).await);
+            return Ok(Stop::Disconnected);
         }
 
         // A zero period means no ticks; tokio would panic on it.
@@ -343,7 +387,7 @@ impl<D: Driver, L: Link> Pump<D, L> {
             // anything, so nothing comes between a step and what it asked to read.
             if let Some(input) = self.reads.pop_front() {
                 if self.step(input).await == Flow::Disconnect {
-                    return Ok(self.finish(Stop::Disconnected).await);
+                    return Ok(Stop::Disconnected);
                 }
                 continue;
             }
@@ -368,7 +412,7 @@ impl<D: Driver, L: Link> Pump<D, L> {
                     self.step(Input::Rx { chan, bytes }).await
                 }
                 Wake::Link(LinkEvent::Disconnected) => {
-                    return Ok(self.finish(Stop::Disconnected).await);
+                    return Ok(Stop::Disconnected);
                 }
                 Wake::Timer(id) => {
                     self.timers.remove(&id);
@@ -387,8 +431,7 @@ impl<D: Driver, L: Link> Pump<D, L> {
                     // Every handle gone is a shutdown too; remember it so a later `run`
                     // does not connect only to stop again.
                     self.shutdown.store(true, Ordering::Release);
-                    self.link.disconnect().await;
-                    return Ok(self.finish(Stop::Shutdown).await);
+                    return Ok(Stop::Shutdown);
                 }
                 Wake::Tick => {
                     let now = self.now();
@@ -396,7 +439,7 @@ impl<D: Driver, L: Link> Pump<D, L> {
                 }
             };
             if flow == Flow::Disconnect {
-                return Ok(self.finish(Stop::Disconnected).await);
+                return Ok(Stop::Disconnected);
             }
         }
     }
@@ -410,14 +453,32 @@ impl<D: Driver, L: Link> Pump<D, L> {
     }
 
     /// Tells the driver the link is gone and reports it; the last thing a session does.
-    async fn finish(&mut self, stop: Stop) -> Stop {
-        // The link is already down, so a `Disconnect` in these outputs changes nothing.
-        self.step(Input::Disconnected).await;
+    fn finish(&mut self) {
+        // No more I/O is meaningful, including I/O emitted by a misbehaving driver.
+        self.outputs.drain().for_each(drop);
+        self.driver.handle(Input::Disconnected, &mut self.outputs);
+        let mut outputs = mem::take(&mut self.outputs);
+        for output in outputs.drain() {
+            match output {
+                Output::Done { id, result } => {
+                    if let Some(reply) = self.pending.remove(&id) {
+                        let _ = reply.send(result);
+                    }
+                }
+                Output::Event(ev) => self.emit(PumpEvent::Event(ev)),
+                Output::Tx { .. }
+                | Output::Subscribe(_)
+                | Output::Read(_)
+                | Output::SetTimer { .. }
+                | Output::CancelTimer(_)
+                | Output::Disconnect => {}
+            }
+        }
+        self.outputs = outputs;
         self.emit(PumpEvent::Disconnected);
-        stop
     }
 
-    /// Feeds `input` and applies every output of that step, in order, before returning.
+    /// Feeds `input` and applies outputs in order until complete or the session ends.
     async fn step(&mut self, input: Input<D::Req>) -> Flow {
         self.driver.handle(input, &mut self.outputs);
         let mut flow = Flow::Continue;
@@ -427,6 +488,7 @@ impl<D: Driver, L: Link> Pump<D, L> {
         for output in outputs.drain() {
             if self.apply(output).await == Flow::Disconnect {
                 flow = Flow::Disconnect;
+                break;
             }
         }
         self.outputs = outputs;
@@ -435,21 +497,36 @@ impl<D: Driver, L: Link> Pump<D, L> {
 
     /// Applies one output.
     async fn apply(&mut self, output: Output<D::Resp, D::Ev>) -> Flow {
+        let deadline = self
+            .timers
+            .values()
+            .copied()
+            .min()
+            .map_or(tokio::time::Instant::now() + self.config.io_timeout, |at| {
+                at.min(tokio::time::Instant::now() + self.config.io_timeout)
+            });
         match output {
             Output::Tx { chan, bytes } => {
-                if let Err(err) = self.link.write(chan, &bytes).await {
-                    self.emit(PumpEvent::LinkError(err));
+                match tokio::time::timeout_at(deadline, self.link.write(chan, &bytes)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => self.emit(PumpEvent::LinkError(err)),
+                    Err(_) => return self.io_expired(),
                 }
             }
             Output::Subscribe(chan) => {
-                if let Err(err) = self.link.subscribe(chan).await {
-                    self.emit(PumpEvent::LinkError(err));
+                match tokio::time::timeout_at(deadline, self.link.subscribe(chan)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => self.emit(PumpEvent::LinkError(err)),
+                    Err(_) => return self.io_expired(),
                 }
             }
-            Output::Read(chan) => match self.link.read(chan).await {
-                Ok(bytes) => self.reads.push_back(Input::Rx { chan, bytes }),
-                Err(err) => self.emit(PumpEvent::LinkError(err)),
-            },
+            Output::Read(chan) => {
+                match tokio::time::timeout_at(deadline, self.link.read(chan)).await {
+                    Ok(Ok(bytes)) => self.reads.push_back(Input::Rx { chan, bytes }),
+                    Ok(Err(err)) => self.emit(PumpEvent::LinkError(err)),
+                    Err(_) => return self.io_expired(),
+                }
+            }
             Output::SetTimer { id, after } => {
                 self.timers.insert(id, tokio::time::Instant::now() + after);
             }
@@ -464,12 +541,14 @@ impl<D: Driver, L: Link> Pump<D, L> {
                     let _ = reply.send(result);
                 }
             }
-            Output::Disconnect => {
-                self.link.disconnect().await;
-                return Flow::Disconnect;
-            }
+            Output::Disconnect => return Flow::Disconnect,
         }
         Flow::Continue
+    }
+
+    fn io_expired(&self) -> Flow {
+        self.emit(PumpEvent::LinkError(io_timeout()));
+        Flow::Disconnect
     }
 
     /// Reports `event`; a dropped receiver means nobody wants it.
@@ -481,6 +560,10 @@ impl<D: Driver, L: Link> Pump<D, L> {
     fn now(&self) -> Instant {
         Instant::ZERO + (tokio::time::Instant::now() - self.origin)
     }
+}
+
+fn io_timeout() -> LinkError {
+    LinkError::Io("transport operation timed out".into())
 }
 
 /// Waits for `deadline` and yields its timer id; waits forever if there is none.

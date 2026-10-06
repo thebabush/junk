@@ -55,6 +55,12 @@ impl core::error::Error for LinkError {}
 /// A `Link` resolves a [`GattMap`] against the real device, moves bytes in both directions
 /// on the channels it resolved, and reports when the connection is gone. It never looks at
 /// a payload. Only the pump holds one (invariant 3).
+///
+/// The pump may drop any operation future on shutdown or an I/O deadline. Cancellation
+/// need not undo remote effects, but must leave the link safe to disconnect (including
+/// after a partial connect) and subsequently reconnect. Disconnect itself may also be
+/// cancelled. Backends must not rely on a future being polled to completion for safety;
+/// a later connect must not inherit subscriptions or events from an abandoned session.
 // `async fn` in a public trait is fine here: the pump is generic over its `Link`, so the
 // missing `Send` bound does not matter and `dyn Link` is never needed.
 #[allow(
