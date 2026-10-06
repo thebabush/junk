@@ -582,7 +582,7 @@ mod tests {
         let mut day = temperature.days[0].clone();
         day.days_ago = 3;
         day.interval_min = 15;
-        day.samples = [0; 48];
+        day.samples = alloc::vec![0; 48];
         day.samples[47] = 0xa0;
         two.days.push(day);
         let samples = temperature_samples(FIXTURE_DAY, &two);

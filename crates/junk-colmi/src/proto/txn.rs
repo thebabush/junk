@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem;
 
-use crate::measure::{StepBucket, bpm_from_raw};
+use crate::measure::{StepBucket, TempSample, bpm_from_raw};
 use junk_core::{Battery, Bytes, Channel, ProtoError, Timestamp};
 
 use crate::proto::{MINUTES_PER_DAY, Req, Resp, civil_from_days, day_minute, model, small};
@@ -184,10 +184,12 @@ pub enum BigWant {
         /// The request's today.
         today: Timestamp,
     },
-    /// The `0x25` reply → [`Resp::Temperature`], its days counted back from `today`.
+    /// The `0x25` replies → [`Resp::Temperature`], ending with today's frame or no body.
     Temperature {
         /// The request's today.
         today: Timestamp,
+        /// Samples from complete frames received so far, in wire order.
+        samples: Vec<TempSample>,
     },
     /// The `0x42` summary that answers a `0x41` request → [`Resp::Workouts`].
     WorkoutList,
@@ -546,9 +548,15 @@ impl Txn {
             (BigWant::Spo2 { today }, ReplyBody::Spo2(spo2)) => {
                 Step::Done(Resp::Spo2(model::spo2_samples(*today, &spo2)))
             }
-            (BigWant::Temperature { today }, ReplyBody::Temperature(temperature)) => Step::Done(
-                Resp::Temperature(model::temperature_samples(*today, &temperature)),
-            ),
+            (BigWant::Temperature { today, samples }, ReplyBody::Temperature(temperature)) => {
+                samples.extend(model::temperature_samples(*today, &temperature));
+                // QRing checks the first day byte of each frame, not every block in it.
+                if temperature.days.first().is_none_or(|day| day.days_ago == 0) {
+                    Step::Done(Resp::Temperature(mem::take(samples)))
+                } else {
+                    Step::Continue
+                }
+            }
             (BigWant::WorkoutList, ReplyBody::WorkoutSummary(summary)) => {
                 Step::Done(Resp::Workouts(summary))
             }
@@ -745,6 +753,10 @@ enum Write {
 ///
 /// As [`Txn::start`], for what is known before encoding: a factory reset, an HR log day
 /// out of range.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one exhaustive request-to-wire mapping"
+)]
 fn plan(req: Req) -> Result<Write, ProtoError> {
     Ok(match req {
         Req::SetTime { at, second, lang } => simple(
@@ -829,7 +841,10 @@ fn plan(req: Req) -> Result<Write, ProtoError> {
             Write::V2(BigWant::Spo2 { today }, RequestBody::Spo2(selector))
         }
         Req::Temperature { today, selector } => Write::V2(
-            BigWant::Temperature { today },
+            BigWant::Temperature {
+                today,
+                samples: Vec::new(),
+            },
             RequestBody::Temperature(selector),
         ),
         Req::WorkoutList { since } => {
@@ -2086,8 +2101,20 @@ mod tests {
         assert!(BigWant::Sleep { today }.wants(BigDataKind::Sleep));
         assert!(!BigWant::Sleep { today }.wants(BigDataKind::Spo2));
         assert!(BigWant::Spo2 { today }.wants(BigDataKind::Spo2));
-        assert!(BigWant::Temperature { today }.wants(BigDataKind::Temperature));
-        assert!(!BigWant::Temperature { today }.wants(BigDataKind::Sleep));
+        assert!(
+            BigWant::Temperature {
+                today,
+                samples: Vec::new()
+            }
+            .wants(BigDataKind::Temperature)
+        );
+        assert!(
+            !BigWant::Temperature {
+                today,
+                samples: Vec::new()
+            }
+            .wants(BigDataKind::Sleep)
+        );
         assert!(BigWant::WorkoutList.wants(BigDataKind::WorkoutSummary));
         assert!(!BigWant::WorkoutList.wants(BigDataKind::WorkoutList));
         let Txn::BigData { want, .. } = detail() else {
@@ -2134,8 +2161,12 @@ mod tests {
         .txn;
         let mut block = vec![0x01, 0x1e, 0x00, 0xa7];
         block.resize(50, 0);
+        assert_eq!(
+            txn.feed_big(&big(BigDataKind::Temperature, &block)),
+            Step::Continue
+        );
         let Step::Done(Resp::Temperature(samples)) =
-            txn.feed_big(&big(BigDataKind::Temperature, &block))
+            txn.feed_big(&big(BigDataKind::Temperature, &[0, 30]))
         else {
             panic!("{txn:?}");
         };
@@ -2153,6 +2184,78 @@ mod tests {
             txn.feed_big(&big(BigDataKind::Sleep, &[0x02, 0x00])),
             malformed("day block")
         );
+    }
+
+    #[test]
+    fn temperature_empty_day_capture_and_empty_body_complete() {
+        for reply in [
+            parsed("bc25020081b8001e"),
+            big(BigDataKind::Temperature, &[]),
+        ] {
+            let mut txn = started(Req::Temperature {
+                today: FIXTURE_TIME,
+                selector: 0,
+            })
+            .txn;
+            assert_eq!(
+                txn.feed_big(&reply),
+                Step::Done(Resp::Temperature(Vec::new()))
+            );
+        }
+    }
+
+    #[test]
+    fn temperature_frames_accumulate_until_today_or_empty_body() {
+        for last in [&[0, 30, 0xa8][..], &[][..]] {
+            let mut txn = started(Req::Temperature {
+                today: FIXTURE_TIME,
+                selector: 6,
+            })
+            .txn;
+            assert_eq!(
+                txn.feed_big(&big(BigDataKind::Temperature, &[2, 60, 0xa7, 0])),
+                Step::Continue
+            );
+            assert_eq!(
+                txn.feed_big(&big(BigDataKind::Temperature, &[1, 30])),
+                Step::Continue
+            );
+            assert_eq!(txn.feed_big(&big(BigDataKind::Sleep, &[])), Step::Ignored);
+            let Step::Done(Resp::Temperature(samples)) =
+                txn.feed_big(&big(BigDataKind::Temperature, last))
+            else {
+                panic!("transfer did not complete");
+            };
+            assert_eq!(samples.len(), if last.is_empty() { 1 } else { 2 });
+            assert_eq!(samples[0].at, at(-2 * MINUTES_PER_DAY));
+            assert_eq!(samples[0].deci_celsius, 367);
+            if !last.is_empty() {
+                assert_eq!(samples[1].at, at(0));
+                assert_eq!(samples[1].deci_celsius, 368);
+            }
+        }
+    }
+
+    #[test]
+    fn temperature_completion_uses_first_day_not_last_block() {
+        let mut txn = started(Req::Temperature {
+            today: FIXTURE_TIME,
+            selector: 1,
+        })
+        .txn;
+        let mut body = vec![1, 240];
+        body.extend_from_slice(&[0xa7; 6]);
+        body.extend_from_slice(&[0, 30]);
+        assert_eq!(
+            txn.feed_big(&big(BigDataKind::Temperature, &body)),
+            Step::Continue
+        );
+        let Step::Done(Resp::Temperature(samples)) =
+            txn.feed_big(&big(BigDataKind::Temperature, &[]))
+        else {
+            panic!("empty body did not complete");
+        };
+        assert_eq!(samples.len(), 6);
     }
 
     #[test]

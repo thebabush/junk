@@ -178,12 +178,14 @@ pub enum Req {
         /// R09 decompilation) and `02` afterwards, as `QRing` sends them.
         selector: u8,
     },
-    /// `bc 25`: temperature. Answered by [`Resp::Temperature`]. Refused as unsupported
-    /// unless the [`Dialect`](crate::proto::Dialect) says the ring measures it.
+    /// `bc 25`: temperature, accumulated until a frame starts with today's day byte or
+    /// has no body. Answered by [`Resp::Temperature`]. Refused as unsupported unless the
+    /// [`Dialect`](crate::proto::Dialect) says the ring measures it.
     Temperature {
         /// Today, so the days can be placed.
         today: Timestamp,
-        /// The request byte: `00` = today, as `QRing` sends it.
+        /// Days back to request: `0` = today. `QRing` incremental sync uses days since
+        /// its last stored sample, or `6` when there is none.
         selector: u8,
     },
     /// `bc 41`: the workout records since a ring-clock timestamp. Answered by

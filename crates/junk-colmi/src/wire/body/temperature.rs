@@ -1,14 +1,11 @@
-//! The `0x25` temperature reply: 50-byte day blocks of half-hourly samples.
+//! The `0x25` temperature reply: interval-sized day blocks, with a possibly short last day.
 
 use alloc::vec::Vec;
 
 use crate::wire::BigDataKind;
-use crate::wire::body::{BodyError, arrays};
+use crate::wire::body::BodyError;
 
-/// Bytes in a day block: the day byte, the interval byte and 48 samples.
-const BLOCK_LEN: usize = 50;
-/// Samples in a day at the 30-minute interval the ring uses.
-const SLOTS: usize = 48;
+const MINUTES_PER_DAY: usize = 1440;
 /// The sample byte that means no sample.
 const NO_SAMPLE: u8 = 0;
 /// What a sample byte is offset by: °C = (v + 200) / 10.
@@ -16,7 +13,8 @@ const OFFSET_DECI_CELSIUS: i16 = 200;
 
 /// The body of a `0x25` reply: zero or more [`TemperatureDay`] blocks, nothing else.
 ///
-/// The fixture replies are one day each, today.
+/// Each block has `1440 / interval_min` slots, except the final block may end early.
+/// A header alone is an empty day; an empty body contains no days.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct TemperatureBody {
     /// One block per day, in the order the ring sent them.
@@ -26,20 +24,35 @@ pub struct TemperatureBody {
 impl TemperatureBody {
     /// The body's days, or why they do not decode.
     pub(super) fn from_body(body: &[u8]) -> Result<TemperatureBody, BodyError> {
-        if !body.len().is_multiple_of(BLOCK_LEN) {
-            return Err(BodyError::Malformed {
-                kind: BigDataKind::Temperature,
-                what: "day blocks",
+        let mut rest = body;
+        let mut days = Vec::new();
+        while !rest.is_empty() {
+            let [days_ago, interval_min, samples @ ..] = rest else {
+                return Err(BodyError::Malformed {
+                    kind: BigDataKind::Temperature,
+                    what: "temperature: incomplete day header",
+                });
+            };
+            if *interval_min == 0 {
+                return Err(BodyError::Malformed {
+                    kind: BigDataKind::Temperature,
+                    what: "temperature: zero interval",
+                });
+            }
+            let count = (MINUTES_PER_DAY / usize::from(*interval_min)).min(samples.len());
+            days.push(TemperatureDay {
+                days_ago: *days_ago,
+                interval_min: *interval_min,
+                samples: samples[..count].to_vec(),
             });
+            rest = &samples[count..];
         }
-        Ok(TemperatureBody {
-            days: arrays(body).map(TemperatureDay::from_block).collect(),
-        })
+        Ok(TemperatureBody { days })
     }
 
     /// The body: each day's block, end to end.
     pub(super) fn to_body(&self) -> Vec<u8> {
-        let mut body = Vec::with_capacity(BLOCK_LEN * self.days.len());
+        let mut body = Vec::new();
         for day in &self.days {
             day.extend_body(&mut body);
         }
@@ -47,15 +60,7 @@ impl TemperatureBody {
     }
 }
 
-/// serde only implements `Serialize` for arrays up to 32 elements.
-fn serialize_samples<S: serde::Serializer>(
-    samples: &[u8; SLOTS],
-    ser: S,
-) -> Result<S::Ok, S::Error> {
-    ser.collect_seq(samples)
-}
-
-/// One day of skin temperature: `<days_ago:u8> <interval_min:u8> <48 × u8>`, slot `i`
+/// One day of skin temperature: `<days_ago:u8> <interval_min:u8> <samples…>`, slot `i`
 /// taken `i × interval_min` minutes after midnight, °C = (v + 200) / 10, `0` = no sample.
 ///
 /// The fixture block starts `00 1e a7 a8 a8 a8 a8 a8 a1 a8`: today, 30-minute slots, 36.7,
@@ -67,14 +72,14 @@ pub struct TemperatureDay {
     pub days_ago: u8,
     /// Minutes between samples; `30` (`1e`) on this ring.
     pub interval_min: u8,
-    /// The samples as sent: 48 slots, `0` for none.
-    #[serde(serialize_with = "serialize_samples")]
-    pub samples: [u8; SLOTS],
+    /// The samples as sent: up to `1440 / interval_min` slots, `0` for none.
+    /// Only the final day in a body may have fewer slots (including none).
+    pub samples: Vec<u8>,
 }
 
 impl TemperatureDay {
     /// The sample in `slot` as tenths of a degree Celsius (`a7` → 367); `None` for a slot
-    /// with no sample or past the 48.
+    /// with no sample or beyond the received slots.
     #[must_use]
     pub fn deci_celsius(&self, slot: usize) -> Option<i16> {
         self.samples
@@ -82,15 +87,6 @@ impl TemperatureDay {
             .copied()
             .filter(|&sample| sample != NO_SAMPLE)
             .map(|sample| i16::from(sample) + OFFSET_DECI_CELSIUS)
-    }
-
-    /// The day a block carries; total.
-    fn from_block([days_ago, interval_min, samples @ ..]: [u8; BLOCK_LEN]) -> TemperatureDay {
-        TemperatureDay {
-            days_ago,
-            interval_min,
-            samples,
-        }
     }
 
     /// Appends the day's block to `body`.
@@ -104,6 +100,9 @@ impl TemperatureDay {
 mod tests {
     use super::*;
     use alloc::vec;
+
+    const SLOTS: usize = 48;
+    const BLOCK_LEN: usize = 2 + SLOTS;
 
     /// Slots 0–28 of the `QRing` fixture day, as the 14:16 reply carries them.
     const MORNING: [u8; 29] = [
@@ -159,18 +158,42 @@ mod tests {
     }
 
     #[test]
-    fn a_body_that_is_not_whole_blocks_is_malformed() {
-        let malformed = Err(BodyError::Malformed {
-            kind: BigDataKind::Temperature,
-            what: "day blocks",
-        });
-        assert_eq!(TemperatureBody::from_body(&[0; 49]), malformed);
-        assert_eq!(TemperatureBody::from_body(&[0; 51]), malformed);
-        assert_eq!(TemperatureBody::from_body(&[0; 2]), malformed);
+    fn zero_interval_and_incomplete_headers_are_malformed() {
+        assert!(TemperatureBody::from_body(&[0, 0]).is_err());
+        assert!(TemperatureBody::from_body(&[0]).is_err());
+        let mut body = block(&[]);
+        body.push(1);
+        assert!(TemperatureBody::from_body(&body).is_err());
         assert_eq!(
             TemperatureBody::from_body(&[]),
             Ok(TemperatureBody { days: Vec::new() })
         );
+    }
+
+    #[test]
+    fn empty_and_short_final_days_round_trip() {
+        for body in [vec![], vec![0, 30], vec![0, 30, 0xa7], vec![0, 30, 0, 0xff]] {
+            let decoded = TemperatureBody::from_body(&body).unwrap();
+            assert_eq!(decoded.to_body(), body);
+            if !body.is_empty() {
+                assert_eq!(decoded.days[0].samples, body[2..]);
+            }
+        }
+    }
+
+    #[test]
+    fn intervals_determine_boundaries_with_a_short_last_day() {
+        for interval in [1u8, 15, 30, 60, 240, 255] {
+            let slots = 1440 / usize::from(interval);
+            let mut body = vec![2, interval];
+            body.extend(core::iter::repeat_n(0xa7, slots));
+            body.extend_from_slice(&[0, 30, 0xa8]);
+            let decoded = TemperatureBody::from_body(&body).unwrap();
+            assert_eq!(decoded.days.len(), 2);
+            assert_eq!(decoded.days[0].samples.len(), slots);
+            assert_eq!(decoded.days[1].samples, [0xa8]);
+            assert_eq!(decoded.to_body(), body);
+        }
     }
 
     #[test]
