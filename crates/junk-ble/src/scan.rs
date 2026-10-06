@@ -253,6 +253,9 @@ mod tests {
             wanted_services(&MAP),
             [Uuid::from_u128(1), Uuid::from_u128(2)]
         );
-        assert!(wanted_services(&GattMap { services: &[] }).is_empty());
+        assert_eq!(
+            wanted_services(&GattMap { services: &[] }),
+            [] as [junk_core::Uuid; 0]
+        );
     }
 }

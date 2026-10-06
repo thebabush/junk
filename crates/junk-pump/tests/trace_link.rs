@@ -91,7 +91,7 @@ async fn a_write_the_trace_does_not_have_fails_rather_than_waits() {
     );
     // Nothing was served, so the trace is still whole.
     assert_eq!(link.unserved(), WRITES);
-    assert!(link.writes().is_empty());
+    assert_eq!(link.writes(), []);
 }
 
 #[tokio::test]

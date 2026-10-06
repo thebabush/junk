@@ -315,11 +315,7 @@ impl ReplyBody {
 /// `bytes` as whole `N`-byte arrays, in order. A tail shorter than `N` is left out, so a
 /// caller that needs the whole input checks its length first.
 fn arrays<const N: usize>(bytes: &[u8]) -> impl Iterator<Item = [u8; N]> + '_ {
-    // Every chunk `chunks_exact` yields is `N` bytes, so the conversion never fails and
-    // nothing is dropped here.
-    bytes
-        .chunks_exact(N)
-        .filter_map(|chunk| chunk.try_into().ok())
+    bytes.as_chunks::<N>().0.iter().copied()
 }
 
 /// `value` as one byte, or [`WireError::Value`] naming `what` if it needs more.

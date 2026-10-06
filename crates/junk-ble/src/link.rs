@@ -444,7 +444,6 @@ async fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::stream;
 
     #[test]
     fn learned_mtu_wins_over_assumed_unless_it_is_the_default() {
@@ -460,6 +459,7 @@ mod tests {
     #[cfg(target_vendor = "apple")]
     mod forwarding {
         use super::*;
+        use futures::stream;
 
         const SVC: Uuid = Uuid::from_u128(0x10);
         const CH_A: Uuid = Uuid::from_u128(0x11);

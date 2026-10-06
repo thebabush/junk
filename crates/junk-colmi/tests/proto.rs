@@ -680,7 +680,7 @@ fn version_picks_the_dialect_row() {
         ]
     );
     assert_eq!(driver.dialect().live_hr, LiveHr::Manual69);
-    assert!(driver.dialect().fw_prefix.is_empty());
+    assert_eq!(driver.dialect().fw_prefix, [] as [&str; 0]);
 
     // Strings with no version request in flight are news, whatever else is in flight,
     // whether read from the Device Information service or notified on V1.

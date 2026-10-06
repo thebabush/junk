@@ -168,7 +168,7 @@ async fn lines_can_be_taken_and_the_link_taken_back() {
 
     let taken = link.take_lines();
     assert_eq!(taken.len(), 2);
-    assert!(link.lines().is_empty());
+    assert_eq!(link.lines(), []);
     assert!(matches!(&taken[1], Line::Data(data) if data.bytes == [7]));
 
     // The clock keeps counting: what follows continues the session.

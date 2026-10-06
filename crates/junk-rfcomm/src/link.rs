@@ -146,14 +146,16 @@ impl Link for RfcommLink {
 
     /// Nothing to do: the device pushes on the stream without being asked
     /// ([`Dir::Stream`](junk_core::Dir::Stream)).
+    // Preserve poll-time validation, consistent with the other Link operations.
+    #[allow(unknown_lints, clippy::unused_async_trait_impl)]
     async fn subscribe(&mut self, chan: Channel) -> Result<(), LinkError> {
         self.stream(chan).map(|_| ())
     }
 
     /// Always [`LinkError::UnknownChannel`]: a byte stream has no attribute to read, so
     /// there is no channel here a read can name.
-    async fn read(&mut self, chan: Channel) -> Result<Bytes, LinkError> {
-        Err(LinkError::UnknownChannel(chan))
+    fn read(&mut self, chan: Channel) -> impl Future<Output = Result<Bytes, LinkError>> {
+        std::future::ready(Err(LinkError::UnknownChannel(chan)))
     }
 
     async fn disconnect(&mut self) {

@@ -482,7 +482,7 @@ fn init_and_a_status_read_run_end_to_end() {
     for (i, ack) in world.acks.iter().enumerate() {
         assert_eq!(ack.data_type, DataType::Ack);
         assert_eq!(ack.seq, 1 - u8::try_from(i % 2).expect("0 or 1"), "ack {i}");
-        assert!(ack.payload.is_empty());
+        assert_eq!(ack.payload, [] as [u8; 0]);
     }
     assert!(world.timers.is_empty(), "{:?}", world.timers);
     assert_eq!(world.disconnects, 0);
@@ -754,7 +754,13 @@ fn a_request_made_before_init_is_done_waits_for_it() {
     world.connect();
     world.request(1, Req::Status);
     assert_eq!(world.sent.len(), 1, "only init's first command is out");
-    assert!(world.dones.is_empty());
+    assert_eq!(
+        world.dones,
+        [] as [(
+            junk_core::ReqId,
+            std::result::Result<junk_sony::proto::Resp, junk_core::ProtoError>
+        ); 0]
+    );
 }
 
 #[test]
@@ -887,7 +893,13 @@ fn ten_resends_then_the_request_times_out_and_the_link_is_dropped() {
         world.timer(ACK_TIMER);
         assert_eq!(world.sent.len(), written + usize::from(resend));
         assert_eq!(world.sent.last(), Some(&command), "resend {resend}");
-        assert!(world.dones.is_empty());
+        assert_eq!(
+            world.dones,
+            [] as [(
+                junk_core::ReqId,
+                std::result::Result<junk_sony::proto::Resp, junk_core::ProtoError>
+            ); 0]
+        );
     }
     assert_eq!(world.disconnects, 0);
     // 11 transmissions in all; the next expiry gives up.
@@ -919,7 +931,13 @@ fn giving_up_during_init_fails_the_queued_request_with_the_link() {
     for _ in 0..MAX_RESENDS {
         world.timer(ACK_TIMER);
     }
-    assert!(world.dones.is_empty());
+    assert_eq!(
+        world.dones,
+        [] as [(
+            junk_core::ReqId,
+            std::result::Result<junk_sony::proto::Resp, junk_core::ProtoError>
+        ); 0]
+    );
     world.timer(ACK_TIMER);
     assert_eq!(world.dones, [(ReqId(5), Err(ProtoError::Disconnected))]);
     assert_eq!(world.disconnects, 1);
@@ -1049,7 +1067,13 @@ fn a_step_with_no_reply_does_not_hang_the_session() {
     world.connect();
     world.request(1, Req::Status);
     // Stuck at the first unanswered step: ACKed, the reply timer running.
-    assert!(world.dones.is_empty());
+    assert_eq!(
+        world.dones,
+        [] as [(
+            junk_core::ReqId,
+            std::result::Result<junk_sony::proto::Resp, junk_core::ProtoError>
+        ); 0]
+    );
     assert_eq!(world.timers.get(&REPLY_TIMER), Some(&REPLY_TIMEOUT));
     assert_eq!(
         world.sent_payloads().last().map(String::as_str),
@@ -1087,7 +1111,10 @@ fn an_unlisted_function_is_not_supported_and_not_asked() {
     assert_eq!(status.capabilities.pairing, Reading::NotSupported);
     assert_eq!(status.pairing_mode, Reading::NotSupported);
     assert_eq!(status.paired_devices, Reading::NotSupported);
-    assert!(status.general_settings.is_empty());
+    assert_eq!(
+        status.general_settings,
+        [] as [junk_sony::proto::GeneralSetting; 0]
+    );
     assert_eq!(
         world.sent_payloads(),
         [
@@ -1322,7 +1349,13 @@ fn a_raw_request_that_is_never_answered_times_out_without_ending_the_session() {
             payload: hex("ee ee"),
         },
     );
-    assert!(world.dones.is_empty());
+    assert_eq!(
+        world.dones,
+        [] as [(
+            junk_core::ReqId,
+            std::result::Result<junk_sony::proto::Resp, junk_core::ProtoError>
+        ); 0]
+    );
     world.timer(REPLY_TIMER);
     assert_eq!(world.dones, [(ReqId(1), Err(ProtoError::Timeout))]);
     assert_eq!(world.disconnects, 0);

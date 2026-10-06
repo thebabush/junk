@@ -528,7 +528,7 @@ mod tests {
         assert_eq!(summary.to_body(), Ok(SUMMARY.to_vec()));
 
         let none = WorkoutSummary::from_body(&[0x00]).unwrap_or_else(|err| panic!("{err}"));
-        assert!(none.records.is_empty());
+        assert_eq!(none.records, Vec::new());
         assert_eq!(none.to_body(), Ok(vec![0x00]));
     }
 
@@ -678,7 +678,7 @@ mod tests {
 
         let bare =
             WorkoutDescriptor::from_body(&DESCRIPTOR[..4]).unwrap_or_else(|err| panic!("{err}"));
-        assert!(bare.fields.is_empty());
+        assert_eq!(bare.fields, Vec::new());
         assert_eq!(bare.record_len(), 0);
         assert_eq!(bare.to_body(), DESCRIPTOR[..4]);
     }

@@ -98,7 +98,7 @@ fn json_is_one_document_with_the_same_values() {
 fn a_missing_file_fails_with_one_line() {
     let output = junk(&["sony", "replay", "/nonexistent/none.trace"]);
     assert!(!output.status.success());
-    assert!(stdout(&output).is_empty());
+    assert_eq!(stdout(&output), "");
     let err = stderr(&output);
     assert_eq!(err.lines().count(), 1, "{err}");
     assert!(
@@ -114,7 +114,7 @@ fn a_file_that_is_not_a_trace_fails_with_one_line() {
     let output = junk(&["sony", "replay", &path.display().to_string()]);
     let _ = std::fs::remove_file(&path);
     assert!(!output.status.success());
-    assert!(stdout(&output).is_empty());
+    assert_eq!(stdout(&output), "");
     let err = stderr(&output);
     assert_eq!(err.lines().count(), 1, "{err}");
     assert!(err.starts_with("junk: "), "{err}");

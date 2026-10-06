@@ -598,8 +598,8 @@ mod tests {
 2026-01-01T00:00:00.099 rx evt 81
 ");
         assert_eq!(out.answers, vec![answer(0, 0, Ok(&[0x81]))]);
-        assert!(out.events.is_empty());
-        assert!(out.timers_fired.is_empty());
+        assert_eq!(out.events, [] as [alloc::vec::Vec<u8>; 0]);
+        assert_eq!(out.timers_fired, [] as [(usize, junk_core::TimerId); 0]);
     }
 
     #[test]
@@ -645,7 +645,7 @@ mod tests {
 2026-01-01T00:00:00.000 rx evt 81
 ");
         assert_eq!(out.answers, vec![answer(0, 0, Ok(&[0x81]))]);
-        assert!(out.timers_fired.is_empty());
+        assert_eq!(out.timers_fired, [] as [(usize, junk_core::TimerId); 0]);
     }
 
     #[test]
@@ -655,18 +655,24 @@ mod tests {
             out.answers,
             vec![answer(0, 0, Err(ProtoError::Disconnected))]
         );
-        assert!(out.timers_fired.is_empty());
+        assert_eq!(out.timers_fired, [] as [(usize, junk_core::TimerId); 0]);
     }
 
     #[test]
     fn an_empty_trace_only_connects_and_disconnects() {
         let out = run("# nothing\n! 2026-01-01T00:00:00.000 connected\n");
-        assert!(out.expected.is_empty());
-        assert!(out.written.is_empty());
-        assert!(out.answers.is_empty());
+        assert_eq!(
+            out.expected,
+            [] as [(junk_core::Channel, alloc::vec::Vec<u8>); 0]
+        );
+        assert_eq!(
+            out.written,
+            [] as [(junk_core::Channel, alloc::vec::Vec<u8>); 0]
+        );
+        assert_eq!(out.answers, Vec::new());
         assert_eq!(out.subscribed, [EVT]);
         assert_eq!(out.reads, [VER]);
-        assert!(out.events.is_empty());
+        assert_eq!(out.events, [] as [alloc::vec::Vec<u8>; 0]);
         assert_eq!(out.writes_match(), Ok(()));
     }
 

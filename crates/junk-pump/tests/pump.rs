@@ -366,7 +366,7 @@ async fn driver_requested_disconnect() {
             PumpEvent::Disconnected,
         ]
     );
-    assert!(peer.subscriptions().is_empty());
+    assert_eq!(peer.subscriptions(), [] as [junk_core::Channel; 0]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -400,7 +400,10 @@ async fn shutdown_fails_the_request_and_drops_the_link() {
 
     // Shut down is shut down: no new session, no new requests.
     assert_eq!(pump.run().await, Ok(Stop::Shutdown));
-    assert!(drain(&mut events).is_empty());
+    assert_eq!(
+        drain(&mut events),
+        [] as [junk_pump::PumpEvent<junk_fake::Ev>; 0]
+    );
     assert_eq!(handle.request(Req::Ping).await, Err(RequestError::Stopped));
 }
 
@@ -763,7 +766,10 @@ async fn connect_failure_and_requests_that_never_run() {
     let err = pump.run().await.unwrap_err();
     assert_eq!(err, PumpError::Connect(LinkError::Io("no adapter".into())));
     assert!(err.to_string().contains("no adapter"));
-    assert!(drain(&mut events).is_empty());
+    assert_eq!(
+        drain(&mut events),
+        [] as [junk_pump::PumpEvent<junk_fake::Ev>; 0]
+    );
     assert!(!peer.is_connected());
 
     let mut after = pin!(handle.request(Req::Get(1)));
@@ -807,7 +813,7 @@ fn errors_display_and_convert() {
     let proto = RequestError::Proto(ProtoError::Timeout);
     assert!(proto.to_string().contains(&ProtoError::Timeout.to_string()));
     assert!(std::error::Error::source(&proto).is_some());
-    assert!(!RequestError::Stopped.to_string().is_empty());
+    assert_ne!(RequestError::Stopped.to_string(), "");
     assert!(std::error::Error::source(&RequestError::Stopped).is_none());
 
     let connect = PumpError::Connect(LinkError::NotConnected);
@@ -906,7 +912,7 @@ async fn shutdown_interrupts_each_stalled_operation() {
         assert_eq!(tokio::time::Instant::now(), now, "shutdown waited for I/O");
         if stall == Stall::Connect {
             assert!(log.borrow().is_empty());
-            assert!(drain(&mut events).is_empty());
+            assert_eq!(drain(&mut events), [] as [junk_pump::PumpEvent<&str>; 0]);
         } else {
             assert!(matches!(log.borrow().last(), Some(Input::Disconnected)));
             assert_eq!(
@@ -947,7 +953,7 @@ async fn every_transport_operation_is_bounded() {
             assert!(matches!(result, Err(PumpError::Connect(LinkError::Io(_)))));
             // A failed connection deliberately keeps requests for a later attempt.
             assert!(poll_once(queued.as_mut()).is_pending());
-            assert!(drain(&mut events).is_empty());
+            assert_eq!(drain(&mut events), [] as [junk_pump::PumpEvent<&str>; 0]);
         } else {
             assert_eq!(result, Ok(Stop::Disconnected));
             assert_eq!(queued.await, Err(RequestError::Stopped));

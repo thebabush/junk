@@ -42,6 +42,9 @@ impl RfcommLink {
     }
 }
 
+// Match the real backend's lazy async interface, even for immediately ready errors.
+// Older toolchains (including our MSRV) do not know this Clippy lint.
+#[allow(unknown_lints, clippy::unused_async_trait_impl)]
 impl Link for RfcommLink {
     async fn connect(&mut self, gatt: &GattMap) -> Result<(ChannelSet, u16), LinkError> {
         // The map is still checked, so a family's map is wrong in the same words anywhere.

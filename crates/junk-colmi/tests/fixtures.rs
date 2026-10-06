@@ -173,7 +173,7 @@ fn qring_v2_lines_are_all_complete_frames() {
         ]
     );
     assert_eq!(tally.complete.values().sum::<usize>(), 46);
-    assert!(tally.header_only.is_empty());
+    assert_eq!(tally.header_only, [] as [usize; 0]);
     // The reconstructed reply bodies: one 49-byte sleep day, 49-byte SpO2 day blocks, a
     // 50-byte temperature day.
     assert_eq!(tally.body_len.get(&0x27), Some(&49));
@@ -186,7 +186,7 @@ fn thering_v1_lines_are_all_workout_frames() {
     let tally = tally_v1(&parse(THERING));
     assert_eq!(tally.frames, 78);
     assert_eq!(tally.bad_checksum, 0);
-    assert!(tally.texts.is_empty());
+    assert_eq!(tally.texts, [] as [std::string::String; 0]);
     let seen: Vec<u8> = tally.cmds.iter().copied().collect();
     assert_eq!(seen, [0x73, 0x77, 0x78]);
     assert_eq!(Cmd::from_byte(0x73), Cmd::Notify);
@@ -202,7 +202,7 @@ fn thering_v2_lines_are_the_complete_workout_record_flow() {
         complete,
         [(0x41, 1), (0x42, 1), (0x43, 1), (0x44, 1), (0x45, 1)]
     );
-    assert!(tally.header_only.is_empty());
+    assert_eq!(tally.header_only, [] as [usize; 0]);
     assert_eq!(tally.body_len.get(&0x42), Some(&49));
     assert_eq!(tally.body_len.get(&0x45), Some(&56));
 }

@@ -272,6 +272,9 @@ mod tests {
             ],
         };
         assert_eq!(DUP.check(), Err(GattMapError::DuplicateChannel(Channel(4))));
-        assert!(!alloc::string::ToString::to_string(&DUP.check().unwrap_err()).is_empty());
+        assert_ne!(
+            alloc::string::ToString::to_string(&DUP.check().unwrap_err()),
+            ""
+        );
     }
 }

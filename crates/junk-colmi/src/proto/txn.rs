@@ -2369,7 +2369,7 @@ mod tests {
             panic!("{txn:?}");
         };
         assert_eq!(bare.package_count, 0);
-        assert!(heart_rates.is_empty());
+        assert_eq!(heart_rates, Vec::new());
 
         // The most packages a descriptor can announce.
         let mut txn = detail();

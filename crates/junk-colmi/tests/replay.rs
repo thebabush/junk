@@ -207,7 +207,10 @@ fn junk_sync_a1_writes_match_and_every_request_is_answered() {
     let session = Session::run(JUNK_SYNC, QRING_OFFSET_MIN);
     // The app's preamble (nine requests), seven days of four logs, four collections: 41.
     stage_a1(&session, 41, &[DIS_FW, DIS_HW]);
-    assert!(session.out.timers_fired.is_empty());
+    assert_eq!(
+        session.out.timers_fired,
+        [] as [(usize, junk_core::TimerId); 0]
+    );
     let versions: Vec<&Resp> = session
         .out
         .answers
@@ -229,7 +232,10 @@ fn junk_live_a1_and_stage_c_record_fetch() {
     let session = Session::run(JUNK_LIVE, QRING_OFFSET_MIN);
     // Start, stop, list, detail.
     stage_a1(&session, 4, &[]);
-    assert!(session.out.timers_fired.is_empty());
+    assert_eq!(
+        session.out.timers_fired,
+        [] as [(usize, junk_core::TimerId); 0]
+    );
     let workouts: Vec<&Resp> = session
         .out
         .answers
@@ -599,7 +605,7 @@ fn qring_a2_raw_commands_pass_through() {
         let Resp::Workouts(summary) = workouts else {
             panic!("{workouts:?}");
         };
-        assert!(summary.records.is_empty());
+        assert_eq!(summary.records, [] as [junk_colmi::wire::WorkoutRecord; 0]);
     }
 
     // What else the app asked, once per connection.

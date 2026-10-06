@@ -168,7 +168,7 @@ fn fixtures_use_only_the_known_channels_and_stamps_never_go_backwards() {
                 "unexpected channel {}",
                 data.chan
             );
-            assert!(!data.bytes.is_empty());
+            assert_ne!(data.bytes, [] as [u8; 0]);
         }
         let stamps: Vec<Stamp> = trace.data().map(|d| d.at).collect();
         assert!(stamps.windows(2).all(|pair| pair[0] <= pair[1]));

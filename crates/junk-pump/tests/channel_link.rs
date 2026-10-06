@@ -19,8 +19,8 @@ async fn nothing_works_before_connect() {
     peer.disconnect();
     link.disconnect().await;
     assert!(!peer.is_connected());
-    assert!(peer.subscriptions().is_empty());
-    assert!(peer.reads().is_empty());
+    assert_eq!(peer.subscriptions(), [] as [junk_core::Channel; 0]);
+    assert_eq!(peer.reads(), [] as [junk_core::Channel; 0]);
 }
 
 #[tokio::test]

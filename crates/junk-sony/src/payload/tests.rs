@@ -701,7 +701,7 @@ fn a_general_setting_capability_names_its_title() {
     assert_eq!(capability.setting_type, GsSettingType::Boolean);
     assert_eq!(capability.title.format, GsStringFormat::EnumName);
     assert_eq!(capability.title.title(), GsTitle::TouchPanelSetting);
-    assert!(capability.items.is_empty());
+    assert_eq!(capability.items, Vec::new());
 
     // A list, with RAW_NAME choices: slot D3 as the multipoint switch.
     let mut list = vec![0x02, 0x02];
@@ -795,7 +795,7 @@ fn a_real_headsets_touch_panel_capability_has_no_description() {
     };
     assert_eq!(capability.slot, 0xd1);
     assert_eq!(capability.title.title(), GsTitle::TouchPanelSetting);
-    assert!(capability.description.text.is_empty());
+    assert_eq!(capability.description.text, "");
     assert_eq!(capability.setting_type, GsSettingType::Boolean);
 
     // A real RAW_NAME slot from the same headset, with a description.

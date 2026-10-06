@@ -184,6 +184,9 @@ fn connected(
     Some((resolved, mtu))
 }
 
+// Keep side effects deferred until the future is polled, just like the real links.
+// `unknown_lints` supports toolchains predating this Clippy lint (including our MSRV).
+#[allow(unknown_lints, clippy::unused_async_trait_impl)]
 impl Link for TraceLink {
     async fn connect(&mut self, gatt: &GattMap) -> Result<(ChannelSet, u16), LinkError> {
         let (resolved, mtu) = self.connected_as;

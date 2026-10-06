@@ -312,11 +312,11 @@ mod tests {
                 sample(20, Bpm::Valid(61)),
             ]
         );
-        assert!(hr_samples(FIXTURE_DAY, 5, &[]).is_empty());
+        assert_eq!(hr_samples(FIXTURE_DAY, 5, &[]), Vec::new());
         // The ring's zero padding after the last reading is not a sample, and a log with no
         // reading at all is empty.
         assert_eq!(hr_samples(FIXTURE_DAY, 5, &[0, 60, 0, 0, 0, 0, 0]).len(), 2);
-        assert!(hr_samples(FIXTURE_DAY, 5, &[0; 300]).is_empty());
+        assert_eq!(hr_samples(FIXTURE_DAY, 5, &[0; 300]), Vec::new());
         // A zero interval puts every sample at the day's start rather than failing.
         let same = hr_samples(FIXTURE_DAY, 0, &[1, 2, 3]);
         assert!(same.iter().all(|sample| sample.at == FIXTURE_DAY));
@@ -324,8 +324,8 @@ mod tests {
 
     #[test]
     fn other_zero_slots_are_skipped_and_an_empty_log_is_empty() {
-        assert!(stress_samples(FIXTURE_DAY, 30, &[0; 64]).is_empty());
-        assert!(hrv_samples(FIXTURE_DAY, 30, &[]).is_empty());
+        assert_eq!(stress_samples(FIXTURE_DAY, 30, &[0; 64]), Vec::new());
+        assert_eq!(hrv_samples(FIXTURE_DAY, 30, &[]), Vec::new());
     }
 
     #[test]
@@ -511,7 +511,10 @@ mod tests {
         assert_eq!(sessions[3].start, at(-2 * MINUTES_PER_DAY));
         assert_eq!(sessions[3].end, at(-2 * MINUTES_PER_DAY));
         assert!(sessions.iter().all(|s| s.stages.is_empty()));
-        assert!(sleep_sessions(FIXTURE_DAY, SleepBody { days: Vec::new() }).is_empty());
+        assert_eq!(
+            sleep_sessions(FIXTURE_DAY, SleepBody { days: Vec::new() }),
+            Vec::new()
+        );
     }
 
     #[test]
@@ -559,7 +562,10 @@ mod tests {
                 percent: Percent::new(95).unwrap_or(Percent::ZERO),
             }
         );
-        assert!(spo2_samples(FIXTURE_DAY, &Spo2Body { days: Vec::new() }).is_empty());
+        assert_eq!(
+            spo2_samples(FIXTURE_DAY, &Spo2Body { days: Vec::new() }),
+            Vec::new()
+        );
     }
 
     #[test]
@@ -594,7 +600,10 @@ mod tests {
                 deci_celsius: 360,
             }
         );
-        assert!(temperature_samples(FIXTURE_DAY, &TemperatureBody { days: Vec::new() }).is_empty());
+        assert_eq!(
+            temperature_samples(FIXTURE_DAY, &TemperatureBody { days: Vec::new() }),
+            Vec::new()
+        );
     }
 
     #[test]

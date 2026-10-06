@@ -143,7 +143,7 @@ async fn sync_retains_data_but_fails_if_one_request_is_malformed() {
     assert_eq!(run.session.failures.len(), 1);
     assert_eq!(run.session.failures[0].0, "temperature");
     assert_eq!(reported.failed.len(), 1);
-    assert!(!run.session.samples.hr.is_empty());
+    assert_ne!(run.session.samples.hr, [] as [junk_colmi::HrSample; 0]);
     assert_eq!(
         writes(&run.link),
         expected(TRACE),
@@ -182,7 +182,10 @@ async fn the_recorded_sync_runs_again_write_for_write() {
         Vec::<String>::new(),
         "the ring refused none"
     );
-    assert!(session.failures.is_empty());
+    assert_eq!(
+        session.failures,
+        [] as [(std::string::String, junk_core::ProtoError); 0]
+    );
     assert_eq!(reported.connected, Some((6, 247)));
 
     let device = &session.device;
@@ -273,7 +276,10 @@ async fn the_recorded_live_session_stops_the_workout_and_fetches_its_record() {
         "nothing went wrong"
     );
     assert_eq!(reported.failed, Vec::<String>::new());
-    assert!(session.failures.is_empty());
+    assert_eq!(
+        session.failures,
+        [] as [(std::string::String, junk_core::ProtoError); 0]
+    );
 
     let Workout {
         record,

@@ -125,10 +125,10 @@ fn thering_frames_decode_and_re_encode_losslessly() {
     let trace = parse(THERING);
     let ring = tally_ring(&trace);
     assert_eq!(ring.frames, 75);
-    assert!(ring.raw.is_empty());
+    assert_eq!(ring.raw, [] as [u8; 0]);
     let host = tally_host(&trace);
     assert_eq!(host.frames, 3);
-    assert!(host.raw.is_empty());
+    assert_eq!(host.raw, [] as [u8; 0]);
 }
 
 #[test]
