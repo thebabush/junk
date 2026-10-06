@@ -34,7 +34,7 @@ Goals
 
 Non-goals (for now)
 - Notification forwarding, firmware update, watch-face anything.
-- A GUI. The shells are a CLI and one example iOS app, small enough to read in a sitting.
+- A GUI. The current shell is a CLI; experimental uniffi bindings are retained, but no app is included.
 - Supporting devices the author does not own. "In principle" means the seams exist and
   are proven by real hardware where there is any: `junk-colmi` (a Colmi R10 ring, BLE GATT)
   and `junk-soundcore` (a Soundcore Motion 300 speaker, Bluetooth Classic RFCOMM) are two
@@ -51,7 +51,6 @@ Non-goals (for now)
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │ shells      junk-cli (tokio + btleplug)   junk-ffi (uniffi→Swift)  │
-│             apps/junk-ios: SwiftUI over junk-ffi, no BLE of its own │
 ├───────────────────────────────────────────────────────────────────┤
 │ pump        junk-pump: owns Driver + Link + timers; the only loop  │
 ├──────────────────────────────┬────────────────────────────────────┤
@@ -129,9 +128,12 @@ Invariants (these are the spec; tests enforce them):
    the driver one `Input` at a time, and applies every `Output` in order before the next
    input. No other task may talk to the Link.
 4. **Every `Request` produces exactly one `Done`.** Timeouts are the driver's job: it emits
-   `SetTimer`, gets `Timer`, emits `Done(Err(Timeout))`. The pump never times anything out.
+   `SetTimer`, gets `Timer`, emits `Done(Err(Timeout))`. Separately, the pump bounds transport
+   operations and terminates a session on stalled I/O; it does not synthesize protocol replies.
+   Shutdown interrupts active I/O, with a separate bounded disconnect attempt. Unfed queued
+   requests fail at session end rather than carrying over to a reconnect.
 5. **Malformed bytes never panic.** `Rx` of garbage yields `Event(Ev::Unparsed{..})` or
-   `Done(Err(..))`. This is fuzzed.
+   `Done(Err(..))`. Malformed-input tests cover known cases; a fuzz harness is not yet implemented.
 6. **No hidden state across connections.** `Disconnected` resets every transaction; the
    driver must be reusable for a reconnect without being rebuilt.
 
@@ -209,10 +211,9 @@ One transaction in flight at a time (that is how the rings behave); the queue se
 user requests. Unsolicited frames (battery, live HR, "new data" notifications 0x73) are
 dispatched to `Event` without touching the active transaction.
 
-Typestate is used in exactly one place, and only when a family needs it: an `Unpaired →
-Paired` handshake (Huami-style key exchange). `Driver<Unpaired>` cannot construct a data
-`Request`. Colmi has no pairing, so its driver is `Driver<Paired>` from `Connected`. The
-seam exists; it costs nothing.
+No pairing typestate is implemented: Colmi needs no pairing handshake. If a future device
+requires one, consider an `Unpaired → Paired` state boundary based on that device's actual
+protocol rather than adding generic pairing machinery now.
 
 ### 3.4 Dialects — "Colmi has a bunch of slightly different protos"
 
@@ -268,7 +269,6 @@ junk/
                              over Link, the samples they collect, and the words they report
     junk-cli/                `junk scan | sync | live | replay <trace> | gatt | sony status | sony replay <trace>`
     junk-ffi/                uniffi: scan/sync/live as an app-level API; owns the pump and the Link
-  apps/junk-ios/             an example SwiftUI app over junk-ffi, generated with xcodegen
   fixtures/colmi-r10/        captured sessions: one QRing sync and one PacketLogger workout from
                              the apps, and one sync and one workout this stack recorded itself
                              — .trace files come from .pklg via tools/pklg2trace.py, or from
@@ -325,7 +325,7 @@ Swift never sees a frame, a channel or a byte.
 
 The cost is what btleplug's own central manager does not do: no background execution and no
 CoreBluetooth state restoration, so a suspended app rescans instead of resuming. That is
-fine for an example and wrong for a real product; the way back is a Swift `Link` handing
+acceptable for an experiment, not a background-sync product; a possible future path is a Swift `Link` handing
 bytes to a `JunkDriver` object, which the `Link` trait already allows and this API would sit
 on unchanged. The `thering` project, which does scan cadence, reconnect backoff and state
 restoration well, is where that would go.
@@ -349,7 +349,7 @@ Stage A — replay, no hardware
    recorded for it (the fixture header has the details). Their part of A2 therefore holds
    by construction; the complete `bc 42`/`bc 45` frames in
    `fixtures/colmi-r10/thering-realtime-2025-11-19.trace` cover the workout flow.
-4. Fuzz `Frame::read` and `Txn::feed` with `cargo-fuzz`; invariant 5.
+4. Planned, not implemented: fuzz `Frame::read` and `Txn::feed` with `cargo-fuzz`; invariant 5.
 
 Stage B — live, Mac CLI (passed 2026-09-06; see the status note under § 6)
 1. `junk scan` finds `COLMI R10_F300` by the V1 service UUID (or as an already-connected
@@ -388,17 +388,11 @@ matches the app DB the same way.
 | 4 | `junk-ble` + `junk-cli sync --record`; Stage B incl. the recorded big-data fixture | real transport, real ring |
 | 5 | `Workout77` stream + record fetch; Stage C | dialect mechanism carries a real variant |
 
-Status 2026-09-07: milestones 0-5 are done and milestone 6 is built but not exercised on a device. Milestone 6 is `junk-ffi` and `apps/junk-ios`,
-built the way § 4 now describes: Rust keeps the Bluetooth on the phone too, so no `Link`
-and no pump is written twice. The app builds from a clean checkout with one command and
-runs on the simulator, where it says why it can find no ring; only a device has a radio,
-which is the one part of it nobody has exercised. Building it paid for itself in three
-findings, each fixed in the stack rather than worked around in Swift: a scan could not tell
-"no ring in range" from "no Bluetooth" (`junk-ble` now reports the radio's state and refuses
-to scan without one), a uniffi error crossed as its `Debug` so the sentence to show had been
-rewritten in Swift (every `JunkError` now carries its own words), and a sync could not be
-stopped though a workout could (both take a stop now, and Ctrl-C stops a `junk sync` tidily
-with its CSVs kept instead of killing it).
+Milestones 0–5 are complete. An iOS example previously exercised the `junk-ffi` build and
+simulator path, but never a ring on a real iPhone. That example has been removed; the
+experimental bindings remain, not a supported app. The experiment led to radio-state errors
+in `junk-ble`, displayable errors in `junk-ffi`, and graceful sync cancellation shared by
+the CLI and FFI.
 
 Milestones 0–5, 2026-09-06: Stage A passes on the two captured fixtures
 and on the two the pump recorded itself (`fixtures/colmi-r10/junk-sync-2026-09-06.trace`,
@@ -407,7 +401,8 @@ Stage B: scan, a seven-day sync with CSVs, an idempotent re-run, and the recorde
 Stage C: the live stream, the stored record and its 65 heart rates. The live run found
 one protocol error in the docs (the version strings are Device Information reads, not V1
 notifications) and made the stack grow a `Read` primitive; nothing else needed changing.
-| 6 | `junk-ffi` + `apps/junk-ios`; the app builds from the same crates and runs on the simulator; a ring on a real iPhone has not been exercised | the portability claim holds as far as the build; the radio side is untested |
+
+The former iOS experiment is not a current milestone; real-device iOS support remains unverified.
 
 ## 7. Open questions
 

@@ -4,9 +4,9 @@ A pure-Rust protocol stack for wearables and Bluetooth gadgets. Each device fami
 sans-I/O `Driver`: a state machine that is fed bytes, timer ticks and requests and answers
 with bytes to send, timers to set and typed results. It never touches a radio or a clock.
 A `Link` carries the bytes (BLE GATT or Bluetooth Classic RFCOMM), `junk-pump` is the one
-loop that joins the two, and the shells on top (a command line tool and an example iOS app)
-stay thin. Because the drivers are pure, every protocol is tested by replaying recorded
-sessions, with no hardware.
+loop that joins the two, and the command line tool and experimental FFI bindings on top
+stay thin. There is no app or GUI. The pure drivers are tested by replaying captured or
+synthetic sessions, with no hardware.
 
 The reasoning and the layering are in [`SPEC.md`](SPEC.md), the design document. Protocol
 facts, with what was verified and what was not, are in [`docs/`](docs/).
@@ -60,6 +60,8 @@ device says on its own and every failure go to stderr.
   sample kind under `--csv` (`hr`, `steps`, `spo2`, `hrv`, `stress`, `temperature`, `sleep`,
   `workouts`), merged with what is already there so that syncing twice writes the same
   files, and with `--record` keeps a lossless trace of the session in the `fixtures/` format.
+  If any request fails, sync continues collecting what it can, saves the successful data
+  and trace, and exits with status 1 rather than reporting a complete sync.
 - `junk live [--device <name-or-id>] [--sport <type>] [--seconds <n>] [--record <file>]`
   starts a workout on the ring, prints its heart rate as `<seconds since start> <bpm>` until
   the time is up or Ctrl-C, stops it and fetches the stored record and its detail.
@@ -80,10 +82,8 @@ device says on its own and every failure go to stderr.
 - **BLE** goes through [btleplug](https://github.com/deviceplug/btleplug) and works on macOS,
   Linux and Windows. On Linux it needs BlueZ at run time and `libdbus-1-dev` and `pkg-config` to build
   (`sudo apt-get install libdbus-1-dev pkg-config`).
-- **macOS** is required for `junk-rfcomm` (Bluetooth Classic through IOBluetooth), for
-  `junk sony status`, and for the iOS app. Elsewhere `junk-rfcomm` builds but connects to nothing.
-- **iOS app** (`apps/junk-ios`): Xcode, [xcodegen](https://github.com/yonaskolb/XcodeGen) and the two iOS
-  Rust targets (`rustup target add aarch64-apple-ios aarch64-apple-ios-sim`).
+- **macOS** is required for `junk-rfcomm` (Bluetooth Classic through IOBluetooth) and
+  `junk sony status`. Elsewhere `junk-rfcomm` builds but connects to nothing.
 - **Python tools** (`tools/pklg2trace.py` and its tests) need [uv](https://docs.astral.sh/uv/):
   `uv run --with pytest pytest tools`.
 
@@ -109,25 +109,9 @@ Checks before sending a change are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - `junk-rfcomm`: a `Link` over Bluetooth Classic RFCOMM, macOS only; the one crate allowed `unsafe`.
 - `junk-app`: what a shell asks of a ring: the sync and live scripts and the samples they collect.
 - `junk-cli`: the `junk` command line tool.
-- `junk-ffi`: uniffi bindings (scan, sync, live) for the iOS app.
-- `apps/junk-ios`: an example SwiftUI app over `junk-ffi`.
-
-## On the phone
-
-`apps/junk-ios/` is an example SwiftUI app over `junk-ffi`: the same three things the CLI
-does (scan, sync, live) on an iPhone, with the ring's heart rate arriving as it streams.
-One command builds it, from the Rust up:
-
-```sh
-apps/junk-ios/bootstrap.sh   # cargo, uniffi, xcframework, xcodegen
-open apps/junk-ios/JunkIOS.xcodeproj
-```
-
-Rust keeps the Bluetooth: btleplug's CoreBluetooth backend is the same code on the phone as
-on the desktop, so the app runs the identical driver, pump and link, and Swift never sees a
-frame, a channel or a byte. The simulator has no Bluetooth, so only a real device can find
-a ring; the app says so rather than showing an empty list. See `apps/junk-ios/README.md`
-for running it on a device and where the signing team goes.
+- `junk-ffi`: experimental uniffi bindings for Colmi scan, sync and live sessions. No app is
+  included and operation on a real iPhone has not been verified. Binding-generation commands
+  are in the crate's documentation.
 
 ## Fixtures and privacy
 
