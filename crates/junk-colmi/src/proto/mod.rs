@@ -1,7 +1,7 @@
 //! The protocol layer: requests, transactions and the [`Driver`](junk_core::Driver) of the
 //! Colmi rings (SPEC §3.3, §3.4).
 //!
-//! [`ColmiDriver`] serialises [`Req`]s into transactions ([`Txn`]), one in flight at a
+//! [`ColmiDriver`] serialises [`Req`]s into internal transactions, one in flight at a
 //! time and the rest queued in order. A transaction writes one frame, arms
 //! [`TIMEOUT_TIMER`] for [`TIMEOUT`], and turns the ring's replies into a [`Resp`]; frames
 //! nobody asked for become [`Ev`]s. The ring's [`Dialect`] is built as the session reveals
@@ -38,7 +38,8 @@ use junk_core::Timestamp;
 pub use dialect::{Dialect, LiveHr, SleepSource, Transport};
 pub use driver::{ColmiDriver, TIMEOUT, TIMEOUT_TIMER};
 pub use req::{Ev, Req, Resp};
-pub use txn::{BigWant, Collected, Log, Started, Step, Txn, VersionStage, Want};
+#[cfg(test)]
+pub(crate) use txn::Txn;
 
 /// Minutes in a day.
 pub(crate) const MINUTES_PER_DAY: i64 = 24 * 60;
