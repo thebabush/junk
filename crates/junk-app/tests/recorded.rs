@@ -110,6 +110,49 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 #[tokio::test]
+async fn sync_retains_data_but_fails_if_one_request_is_malformed() {
+    const TRACE: &str = "junk-sync-2026-09-06.trace";
+    let text = fs::read_to_string(format!("{FIXTURES}/{TRACE}")).unwrap();
+    // Valid big-data framing and CRC, but a temperature block with interval zero.
+    let malformed =
+        junk_colmi::wire::BigData::new(junk_colmi::wire::BigDataKind::Temperature, vec![0, 0])
+            .unwrap()
+            .to_bytes();
+    let original = text
+        .lines()
+        .find(|line| line.contains("rx v2.notify bc25"))
+        .unwrap();
+    let (prefix, _) = original.rsplit_once(' ').unwrap();
+    let text = text.replace(original, &format!("{prefix} {}", hex(&malformed)));
+    let trace = Trace::parse(&text).unwrap();
+    let mut reported = Reported::default();
+    let run = junk_app::sync(
+        TraceLink::new(&trace, channel_by_name),
+        clock(2, 10, 24),
+        7,
+        std::future::pending(),
+        |progress| reported.observe(&progress),
+    )
+    .await;
+    assert!(
+        run.result
+            .unwrap_err()
+            .to_string()
+            .contains("1 request(s) failed")
+    );
+    assert_eq!(run.session.failures.len(), 1);
+    assert_eq!(run.session.failures[0].0, "temperature");
+    assert_eq!(reported.failed.len(), 1);
+    assert!(!run.session.samples.hr.is_empty());
+    assert_eq!(
+        writes(&run.link),
+        expected(TRACE),
+        "later requests still run"
+    );
+    assert_eq!(run.link.unserved(), 0);
+}
+
+#[tokio::test]
 async fn the_recorded_sync_runs_again_write_for_write() {
     const TRACE: &str = "junk-sync-2026-09-06.trace";
     let mut reported = Reported::default();

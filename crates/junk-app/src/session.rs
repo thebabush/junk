@@ -401,7 +401,9 @@ fn relay<O: FnMut(Progress<'_>)>(
 ///
 /// # Errors
 ///
-/// If the link could not be connected, or the pump stopped with a request in flight.
+/// If the link could not be connected, the pump stopped with a request in flight, or any
+/// request failed. Individual failures do not stop collection: successful data remains in
+/// [`Run::session`], and [`Session::failures`] records the failed requests.
 pub async fn sync<L: Link>(
     link: L,
     clock: Clock,
@@ -419,6 +421,16 @@ pub async fn sync<L: Link>(
     )
     .await;
     session.device.mtu = *mtu.lock().unwrap_or_else(PoisonError::into_inner);
+    let result = result.and_then(|()| {
+        if session.failures.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "sync incomplete: {} request(s) failed; successful data was retained",
+                session.failures.len()
+            ))
+        }
+    });
     Run {
         result,
         session,
